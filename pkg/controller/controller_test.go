@@ -4513,8 +4513,36 @@ func TestProvisionFromSnapshot(t *testing.T) {
 			if tc.nilBoundVolumeSnapshotContentName {
 				snap.Status.BoundVolumeSnapshotContentName = nil
 			}
-			if tc.nilReadyToUse {
-				snap.Status.ReadyToUse = nil
+		if tc.nilReadyToUse {
+			snap.Status.ReadyToUse = nil
+		}
+		if tc.snapshotBeingDeleted {
+			deletionTime := metav1.Now()
+			snap.ObjectMeta.DeletionTimestamp = &deletionTime
+			// Set up finalizers based on what the test is checking:
+			// - snapshotWithDifferentFinalizer: add a different finalizer to verify we check for the specific source-protection one
+			// - snapshotWithoutSourceProtectionFinalizer: don't add any finalizers (simulates new provisioning attempt)
+			// - default: add the provisioner.storage.kubernetes.io/volumesnapshot-as-source-protection finalizer (simulates in-flight provisioning)
+			if tc.snapshotWithDifferentFinalizer {
+				snap.ObjectMeta.Finalizers = []string{"some-other-finalizer"}
+			} else if !tc.snapshotWithoutSourceProtectionFinalizer {
+				snap.ObjectMeta.Finalizers = []string{"provisioner.storage.kubernetes.io/volumesnapshot-as-source-protection"}
+			}
+		}
+		return true, snap, nil
+		})
+
+		// Mock the update operation for volumesnapshots to handle finalizer additions/removals.
+		// The provisioner adds/removes the provisioner.storage.kubernetes.io/volumesnapshot-as-source-protection
+		// finalizer to protect snapshots during provisioning operations.
+		client.AddReactor("update", "volumesnapshots", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+			updateAction, ok := action.(k8stesting.UpdateAction)
+			if !ok {
+				return false, nil, fmt.Errorf("expected UpdateAction, got %T", action)
+			}
+			snap, ok := updateAction.GetObject().(*crdv1.VolumeSnapshot)
+			if !ok {
+				return false, nil, fmt.Errorf("expected VolumeSnapshot, got %T", updateAction.GetObject())
 			}
 			return true, snap, nil
 		})
